@@ -10,3 +10,8 @@ Data source of MSA Gas Permeability is from:
 ```
 https://doi.org/10.1016/j.xcrp.2024.102067
 ```
+
+Data source of ND Simulation is from:
+```
+https://doi.org/10.1016/j.mtphys.2022.100850
+```
