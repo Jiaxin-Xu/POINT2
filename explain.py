@@ -138,6 +138,24 @@ def explain_model(results_dir, target_property, fp_method='Morgan', radius=2, n_
             # Save the image to a file
             img.save(os.path.join(results_dir, 'morgan_bits_summary_{}.png'.format(i//batch_size + 1)))
     
+    # Additional visualization details for RDKitFP if necessary
+    elif fp_method == 'RDKit':
+        smiles_df = pd.read_csv(os.path.join(results_dir, 'smiles_test.csv'))
+        smiles_test = smiles_df.iloc[:, 0].tolist()
+        test_morgan_fp, test_bit_info, list_bits, legends = smiles_to_fingerprint(smiles_test, method='RDKit', 
+                                                                                  radius=radius, n_bits=n_bits, return_bit_info=True)
+        legends, test_bit_info = remove_and_sort_duplicates(legends, test_bit_info)
+        # Drawing the RDKit bits (cannot hold in one img, too large)
+        # Process in batches of 100
+        batch_size = 100
+        for i in range(0, len(legends), batch_size):
+            # Get the batch of each list
+            batch_list_bits = test_bit_info[i:i+batch_size]
+            batch_legends = legends[i:i+batch_size]
+            img = Draw.DrawRDKitBits(batch_list_bits, molsPerRow=4, legends=batch_legends, subImgSize=(150, 150))
+            # Save the image to a file
+            img.save(os.path.join(results_dir, 'RDKit_bits_summary_{}.png'.format(i//batch_size + 1)))
+
     # X_test_transformed = X_test_transformed[:10]
     # Generate SHAP values
     shap_values = explainer.shap_values(X_test_transformed)
@@ -152,7 +170,7 @@ def explain_model(results_dir, target_property, fp_method='Morgan', radius=2, n_
                         feature_names=extract_maccs_feature_descriptions_list(), show=False)
         plt.savefig(os.path.join(results_dir, 'shap_summary_plot_beeswarm.png'))
         plt.close()
-    if fp_method == "Morgan":
+    if fp_method in ("Morgan", "RDKit"):
         feature_names = [f'Bit {i}' for i in range(len(X_test_transformed[0]))]
         shap.summary_plot(shap_values, X_test_transformed, plot_type="bar", 
                         feature_names=feature_names, show=False)
@@ -176,7 +194,7 @@ def explain_model(results_dir, target_property, fp_method='Morgan', radius=2, n_
                                                 data=X_test_transformed[i],
                                                 feature_names=extract_maccs_feature_descriptions_list()),
                                                 show=False)
-        elif fp_method == "Morgan":
+        elif fp_method in ("Morgan", "RDKit"):
             feature_names = [f'Bit {i}' for i in range(len(X_test_transformed[0]))]
             shap.waterfall_plot(shap.Explanation(values=shap_values[i], 
                                                 base_values=explainer.expected_value, 

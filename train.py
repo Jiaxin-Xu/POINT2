@@ -16,6 +16,9 @@ from tpot import TPOTRegressor
 import warnings 
 from quantile_forest import RandomForestQuantileRegressor
 from utils import set_global_random_seed
+import tensorflow as tf
+
+from model import train_mlp_model, mlp_predict_with_uncertainty, build_bayesian_model, compile_and_train_BNN, bnn_predict_with_uncertainty
     
 def setup_logging(results_dir: str):
     """
@@ -44,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--target_property', type=str, default='Tg', help='Target property to predict (e.g., Tg).')
     parser.add_argument('--test_size', type=float, default=0.2, help='Fraction of data to use for testing.')
     parser.add_argument('--n_jobs', type=int, default=-1, help='Number of CPU cores to use.')
+
+    parser.add_argument('--model', type=str, default='QuantileRandomForest', choices=['QuantileRandomForest', 'DropoutMLP', 'BNN'], help='Uncertainty Model Type.')
     return parser.parse_args()
 
 # def smiles_to_fingerprint(smiles_list: list[str], radius: int = 2, n_bits: int = 2048) -> np.ndarray:
@@ -109,7 +114,9 @@ def smiles_to_fingerprint(smiles_list: list[str], method: str = 'Morgan',
             bitInfo = {}
             fingerprint = Chem.RDKFingerprint(mol, maxPath=radius, fpSize=n_bits, bitInfo = bitInfo)
             bit_tuples = [(mol, k, bitInfo) for k in bitInfo.keys()]
-            all_bit_info.append(bit_tuples)
+            all_bit_info.extend(bit_tuples)
+            for x in fingerprint.GetOnBits():
+                legends.append(str(x))
 
         elif method == 'MACCS':
             fingerprint = MACCSkeys.GenMACCSKeys(mol)
@@ -228,8 +235,9 @@ def train_validate(target_property: str = 'Tg', test_size: float = 0.2, n_jobs: 
 
 def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2048,
                       target_property: str = 'Tg', 
-                      test_size: float = 0.2, n_jobs: int = -1) -> tuple:
-    results_dir = f'./results/{target_property}_uq/{fp_method}_{radius}_{n_bits}/'
+                      test_size: float = 0.2, n_jobs: int = -1,
+                      model_type: str = 'QuantileRandomForest') -> tuple:
+    results_dir = f'./results/{target_property}_uq/{model_type}_{fp_method}_{radius}_{n_bits}/'
     os.makedirs(results_dir, exist_ok=True)
     setup_logging(results_dir)
 
@@ -256,21 +264,61 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
     smiles_train.to_csv(os.path.join(results_dir, 'smiles_train.csv'), index=False)
     smiles_test.to_csv(os.path.join(results_dir, 'smiles_test.csv'), index=False)
 
-    # Using RandomForestQuantileRegressor for uncertainty quantification
-    qrf = RandomForestQuantileRegressor(random_state=42, n_jobs=n_jobs)
-    qrf.fit(X_train, y_train)
+    if model_type == 'QuantileRandomForest':
+        # Using RandomForestQuantileRegressor for uncertainty quantification
+        model = RandomForestQuantileRegressor(random_state=42, n_jobs=n_jobs)
+        model.fit(X_train, y_train)
+        y_pred_train = model.predict(X_train)
+        y_pred_test = model.predict(X_test)
+        # Uncertainty prediction
+        lower_quantile = model.predict(X_test, quantiles=0.05)
+        upper_quantile = model.predict(X_test, quantiles=0.95)
+        std_dev = (upper_quantile - lower_quantile) / 2  # Approximate std as half the prediction interval
 
-    y_pred_train = qrf.predict(X_train)
-    y_pred_test = qrf.predict(X_test)
+        lower_quantile_tr = model.predict(X_train, quantiles=0.05)
+        upper_quantile_tr = model.predict(X_train, quantiles=0.95)
+        std_dev_tr = (upper_quantile_tr - lower_quantile_tr) / 2
+    # TODO: add more  U-model
+    elif model_type == 'DropoutMLP':
+        model = train_mlp_model(X_train, y_train)
+        y_pred_test, _, quantile_predictions = mlp_predict_with_uncertainty(
+            model, X_test, n_iter=100, quantiles=[5, 95])
+        lower_quantile = quantile_predictions[0]
+        upper_quantile = quantile_predictions[1]
+        std_dev = (upper_quantile - lower_quantile) / 2
 
-    # Uncertainty prediction
-    lower_quantile = qrf.predict(X_test, quantiles=0.05)
-    upper_quantile = qrf.predict(X_test, quantiles=0.95)
-    std_dev = (upper_quantile - lower_quantile) / 2  # Approximate std as half the prediction interval
+        y_pred_train, _, quantile_predictions_tr = mlp_predict_with_uncertainty(
+            model, X_train, n_iter=100, quantiles=[5, 95])
+        lower_quantile_tr = quantile_predictions_tr[0]
+        upper_quantile_tr = quantile_predictions_tr[1]
+        std_dev_tr = (upper_quantile_tr - lower_quantile_tr) / 2
+    elif model_type == 'BNN':
+        X_train_tf = tf.convert_to_tensor(X_train, dtype=tf.float32)
+        y_train_tf = tf.convert_to_tensor(y_train, dtype=tf.float32)
+        X_test_tf = tf.convert_to_tensor(X_test, dtype=tf.float32)
+        # y_test_tf = tf.convert_to_tensor(y_test, dtype=tf.float32)
+        
+        input_shape = (X_train_tf.shape[1],)
+        hidden_units = 64
 
-    lower_quantile_tr = qrf.predict(X_train, quantiles=0.05)
-    upper_quantile_tr = qrf.predict(X_train, quantiles=0.95)
-    std_dev_tr = (upper_quantile_tr - lower_quantile_tr) / 2
+        model = build_bayesian_model(input_shape=input_shape, hidden_units=hidden_units, output_shape=1)
+        model = compile_and_train_BNN(model, X_train_tf, y_train_tf, num_epochs=100)
+        # Make predictions with uncertainty on the test data
+        y_pred_test, _, quantile_predictions = bnn_predict_with_uncertainty(
+            model, X_test_tf, n_iter=100, quantiles=[5, 95])
+        lower_quantile = quantile_predictions[0]
+        upper_quantile = quantile_predictions[1]
+        std_dev = (upper_quantile - lower_quantile) / 2
+
+        y_pred_train, _, quantile_predictions_tr = bnn_predict_with_uncertainty(
+            model, X_train_tf, n_iter=100, quantiles=[5, 95])
+        lower_quantile_tr = quantile_predictions_tr[0]
+        upper_quantile_tr = quantile_predictions_tr[1]
+        std_dev_tr = (upper_quantile_tr - lower_quantile_tr) / 2
+
+    else:
+        raise ValueError("Unsupported model type!")
+    
 
     train_rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
     train_r2 = r2_score(y_train, y_pred_train)
@@ -391,9 +439,9 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
     plt.close()
 
     # Save the model
-    joblib.dump(qrf, os.path.join(results_dir, 'best_model_with_uq.pkl'))
+    joblib.dump(model, os.path.join(results_dir, 'best_model_with_uq.pkl'))
 
-    return qrf, X_train, X_test, y_train, y_test, y_pred_test, lower_quantile, upper_quantile
+    return model, X_train, X_test, y_train, y_test, y_pred_test, lower_quantile, upper_quantile
 
 
 if __name__ == "__main__":
@@ -403,4 +451,5 @@ if __name__ == "__main__":
     # train_validate(args.target_property, args.test_size, args.n_jobs)
     train_validate_uq(fp_method=args.fpmethod, radius = args.radius, n_bits=args.n_bits,
                       target_property = args.target_property, 
-                      test_size = args.test_size, n_jobs = args.n_jobs)
+                      test_size = args.test_size, n_jobs = args.n_jobs,
+                      model_type = args.model)
