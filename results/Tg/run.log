@@ -1,0 +1,16 @@
+X_train shape: (5766, 2048)
+y_train shape: (5766,)
+X_test shape: (1442, 2048)
+y_test shape: (1442,)
+Optimization Progress:   0%|          | 0/40 [00:00<?, ?pipeline/s]Optimization Progress:   2%|▎         | 1/40 [03:38<2:22:17, 218.91s/pipeline]Optimization Progress:  25%|██▌       | 10/40 [03:40<07:59, 15.99s/pipeline]  Optimization Progress:  30%|███       | 12/40 [07:50<19:01, 40.76s/pipeline]                                                                            
+Generation 1 - Current best internal CV score: -1967.690354708844
+Optimization Progress:  50%|█████     | 20/40 [07:50<13:35, 40.76s/pipeline]Optimization Progress:  50%|█████     | 20/40 [07:50<05:55, 17.75s/pipeline]Optimization Progress:  50%|█████     | 20/40 [08:10<05:55, 17.75s/pipeline]Optimization Progress:  52%|█████▎    | 21/40 [10:59<10:34, 33.38s/pipeline]                                                                            
+Generation 2 - Current best internal CV score: -1967.690354708844
+Optimization Progress:  75%|███████▌  | 30/40 [10:59<05:33, 33.38s/pipeline]Optimization Progress:  75%|███████▌  | 30/40 [10:59<02:33, 15.34s/pipeline]Optimization Progress:  78%|███████▊  | 31/40 [11:10<02:18, 15.34s/pipeline]Optimization Progress:  80%|████████  | 32/40 [15:18<04:16, 32.07s/pipeline]                                                                            
+Generation 3 - Current best internal CV score: -1926.1485452428828
+Optimization Progress: 100%|██████████| 40/40 [15:18<00:00, 32.07s/pipeline]                                                                            
+Best pipeline: ExtraTreesRegressor(input_matrix, bootstrap=False, max_features=0.65, min_samples_leaf=7, min_samples_split=15, n_estimators=100)
+Train RMSE: 30.9780
+Train R2: 0.9243
+Test RMSE: 40.1439
+Test R2: 0.8702

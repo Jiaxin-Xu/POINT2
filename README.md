@@ -15,3 +15,18 @@ Data source of ND Simulation is from:
 ```
 https://doi.org/10.1016/j.mtphys.2022.100850
 ```
+
+### 2. Model
+Add torch-molecule (under active development) as a submodule for graph-related models:
+```
+cd POINT2
+git submodule add https://github.com/liugangcode/torch-molecule.git
+```
+When you want to update:
+```
+cd torch-molecule
+git pull origin main  # or the relevant branch
+cd ..
+git add torch-molecule
+git commit -m "Update torch-molecule submodule"
+```
