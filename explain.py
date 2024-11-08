@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--n_bits', type=int, default=2048, help='Number of bits for the fingerprint vector.')
 
     parser.add_argument('--target_property', type=str, default='Tg', help='Target property to predict (e.g., Tg).')
+    parser.add_argument('--model', type=str, default='QuantileRandomForest', choices=['QuantileRandomForest', 'DropoutMLP', 'BNN'], help='Uncertainty Model Type.')
 
     return parser.parse_args()
 
@@ -241,7 +242,7 @@ if __name__ == "__main__":
     args = parse_args()
     # target_property = 'Tg'  # Example target property
     # results_dir = f'./results/{target_property}_uq/'
-    results_dir = f'./results/{args.target_property}_uq/{args.fpmethod}_{args.radius}_{args.n_bits}/'
+    results_dir = f'./results/{args.target_property}_uq/{args.model}_{args.fpmethod}_{args.radius}_{args.n_bits}/'
     # results_dir = f'./results/{target_property}/'
     
     explain_model(results_dir, args.target_property, args.fpmethod, args.radius, args.n_bits)

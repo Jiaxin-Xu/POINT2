@@ -3,6 +3,7 @@ import numpy as np
 import os
 from rdkit import Chem
 from rdkit.Chem import AllChem, Draw
+from rdkit.Chem.Draw import rdMolDraw2D
 import matplotlib.pyplot as plt
 from collections import defaultdict
 
@@ -11,6 +12,64 @@ def set_global_random_seed(seed: int):
     np.random.seed(seed)
     os.environ['PYTHONASHSEED']=str(seed)
     print(f"Global random seed set to {seed}")
+
+
+def visualize_important_nodes(smiles_list, node_importance_list, top_percent=20, output_dir='./'):
+    """
+    Visualize the top `top_percent` important nodes (atoms) in the molecules represented by SMILES strings.
+
+    Args:
+        smiles_list (list): List of SMILES strings.
+        node_importance_list (list): List of node importance values for each molecule.
+        top_percent (float): The top percentage of nodes to highlight (e.g., 20 for top 20%).
+        output_dir (str): Directory where the images will be saved.
+    """
+    for i, (smiles, node_importance) in enumerate(zip(smiles_list[:10], node_importance_list[:10])):  # Visualize only first 2
+        # Convert SMILES to RDKit molecule
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            print(f"Invalid SMILES: {smiles}")
+            continue
+
+        # Get indices of top 20% important atoms
+        node_importance = np.array(node_importance)
+        threshold = np.percentile(node_importance, 100 - top_percent)
+        important_atoms = [j for j, imp in enumerate(node_importance) if imp >= threshold]
+        
+        # # Normalize importance values for coloring (scaling between 0 and 1)
+        # min_importance = node_importance[important_atoms].min()
+        # max_importance = node_importance[important_atoms].max()
+        # normalized_importance = (node_importance[important_atoms] - min_importance) / (max_importance - min_importance)
+
+        # # Assign shades of green based on normalized importance
+        # highlight_colors = {
+        #     idx: (0, intensity, 0, intensity)  # (R, G, B, Alpha)
+        #     for idx, intensity in zip(important_atoms, normalized_importance)
+        # }
+
+        # # Highlight the important atoms
+        # atom_highlight = {atom_idx: node_importance[atom_idx] for atom_idx in important_atoms}
+
+        # Set up the drawer
+        drawer = rdMolDraw2D.MolDraw2DCairo(400, 400)
+        # opts = drawer.drawOptions()
+        
+        # Highlight atom colors
+        highlight_colors = {idx: (0.1, 1, 0.01) for idx in important_atoms}  # Green color for important atoms
+        # highlight_colors = {idx: (1, 0, 0) for idx in important_atoms}  # Red color for important atoms
+
+        # Draw the molecule
+        rdMolDraw2D.PrepareAndDrawMolecule(drawer, mol, highlightAtoms=important_atoms, highlightAtomColors=highlight_colors)
+        drawer.FinishDrawing()
+        
+        # Save the image
+        img_path = os.path.join(output_dir, f"rationale_{i+1}.png")
+        with open(img_path, 'wb') as f:
+            f.write(drawer.GetDrawingText())
+        print(f"Saved visualization for molecule {i+1} at {img_path}")
+
+# Example usage
+# visualize_important_nodes(smiles_list=smiles_test[:2], node_importance_list=node_importance_test, output_dir='./')
 
 
 def extract_maccs_feature_descriptions_list():

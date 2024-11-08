@@ -15,8 +15,11 @@ import joblib
 from tpot import TPOTRegressor
 import warnings 
 from quantile_forest import RandomForestQuantileRegressor
-from utils import set_global_random_seed
+from utils import set_global_random_seed, visualize_important_nodes
 import tensorflow as tf
+from torch_molecule import GREAMolecularPredictor, GNNMolecularPredictor
+from torch_molecule.utils import mean_absolute_error as torch_mae, mean_squared_error as torch_mse, r2_score as torch_r2
+from torch_molecule.utils.search import ParameterType, ParameterSpec
 
 from model import train_mlp_model, mlp_predict_with_uncertainty, build_bayesian_model, compile_and_train_BNN, bnn_predict_with_uncertainty
     
@@ -48,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--test_size', type=float, default=0.2, help='Fraction of data to use for testing.')
     parser.add_argument('--n_jobs', type=int, default=-1, help='Number of CPU cores to use.')
 
-    parser.add_argument('--model', type=str, default='QuantileRandomForest', choices=['QuantileRandomForest', 'DropoutMLP', 'BNN'], help='Uncertainty Model Type.')
+    parser.add_argument('--model', type=str, default='QuantileRandomForest', choices=['QuantileRandomForest', 'DropoutMLP', 'BNN', 'torch-GREA', 'torch-GNN'], help='Uncertainty Model Type.')
     return parser.parse_args()
 
 # def smiles_to_fingerprint(smiles_list: list[str], radius: int = 2, n_bits: int = 2048) -> np.ndarray:
@@ -158,6 +161,12 @@ def train_validate(target_property: str = 'Tg', test_size: float = 0.2, n_jobs: 
 
     if target_property == 'Tg':
         data_path = './data/labeled/polyinfo/Tg_SMILES_class_pid_polyinfo_median.csv'
+    elif target_property == 'Tm':
+        data_path = './data/labeled/polyinfo/Tm_SMILES_class_pid_polyinfo_median.csv'
+    elif target_property == 'TC':
+        data_path = './data/labeled/nd/MD_TC_Oct21_2024_wSMILES.csv'
+    else:
+        raise ValueError("Unsupported target property!")
     data = pd.read_csv(data_path)
     smiles = data['SMILES']
     y = data[target_property].to_numpy()
@@ -233,22 +242,33 @@ def train_validate(target_property: str = 'Tg', test_size: float = 0.2, n_jobs: 
 
     return automl, X_train, X_test, y_train, y_test, y_pred_test
 
+
 def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2048,
                       target_property: str = 'Tg', 
                       test_size: float = 0.2, n_jobs: int = -1,
-                      model_type: str = 'QuantileRandomForest') -> tuple:
+                      model_type: str = 'QuantileRandomForest',
+                      n_trials: int = 20) -> tuple:
+    
     results_dir = f'./results/{target_property}_uq/{model_type}_{fp_method}_{radius}_{n_bits}/'
     os.makedirs(results_dir, exist_ok=True)
     setup_logging(results_dir)
 
     if target_property == 'Tg':
         data_path = './data/labeled/polyinfo/Tg_SMILES_class_pid_polyinfo_median.csv'
+    elif target_property == 'Tm':
+        data_path = './data/labeled/polyinfo/Tm_SMILES_class_pid_polyinfo_median.csv'
+    elif target_property == 'TC':
+        data_path = './data/labeled/nd/MD_TC_Oct21_2024_wSMILES.csv'
+    else:
+        raise ValueError("Unsupported target property!")
     data = pd.read_csv(data_path)
     smiles = data['SMILES']
     y = data[target_property].to_numpy()
     if np.any(np.isnan(y)) or np.any(np.isinf(y)):
         raise ValueError("Target variable contains NaN or infinite values.")
-
+    
+    # # Conditionally handle fingerprinting for non-torch-GREA models
+    # if model_type != 'torch-GREA':
     # X = smiles_to_fingerprint(smiles)
     X = smiles_to_fingerprint(smiles, fp_method, radius, n_bits)
     if np.any(np.isnan(X)) or np.any(np.isinf(X)):
@@ -315,11 +335,118 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
         lower_quantile_tr = quantile_predictions_tr[0]
         upper_quantile_tr = quantile_predictions_tr[1]
         std_dev_tr = (upper_quantile_tr - lower_quantile_tr) / 2
+    elif model_type == 'torch-GREA':
+        print(f"\n=== Training torch-GREA model for {target_property} ===")
+        # Initialize torch-GREA model
+        model = GREAMolecularPredictor(
+            num_tasks=1,
+            task_type="regression",
+            model_name=f"GREA_{target_property}",
+            batch_size=512,
+            epochs=100,
+            evaluate_criterion='r2',
+            evaluate_higher_better=True,
+            verbose=True
+        )
+        # Set up hyperparameter search parameters
+        search_parameters = {
+            "gnn_type": ParameterSpec(ParameterType.CATEGORICAL, ["gin-virtual", "gcn-virtual", "gin", "gcn"]),
+            "norm_layer": ParameterSpec(ParameterType.CATEGORICAL, ["batch_norm", "layer_norm", "size_norm"]),
+            'num_layer': ParameterSpec(ParameterType.INTEGER, value_range=(2, 5)),
+            'emb_dim': ParameterSpec(ParameterType.INTEGER, value_range=(256, 512)),
+            'learning_rate': ParameterSpec(ParameterType.FLOAT, value_range=(1e-4, 1e-2)),
+            'drop_ratio': ParameterSpec(ParameterType.FLOAT, value_range=(0.05, 0.5)),
+            'gamma': ParameterSpec(ParameterType.FLOAT, value_range=(0.25, 0.75))
+            }
+        # Train torch-GREA model
+        model.autofit(
+            X_train=smiles_train.tolist(),
+            y_train=y_train,
+            X_val=smiles_train.tolist(),
+            y_val=y_train,
+            search_parameters=search_parameters,
+            n_trials=n_trials
+        )
+        # Evaluate model on the test and training data
+        eval_results_test = model.predict(smiles_test.tolist())
+        eval_results_train = model.predict(smiles_train.tolist())
+        
+        y_pred_test = eval_results_test['prediction'].reshape(-1)
+        y_pred_train = eval_results_train['prediction'].reshape(-1)
+        y_pred_test_variance = eval_results_test['variance'].reshape(-1)
+        y_pred_train_variance = eval_results_train['variance'].reshape(-1)
+        node_importance_test = eval_results_test['node_importance']
+        print('top-2 example for node importance', node_importance_test[:2])
+        
+        visualize_important_nodes(smiles_list=smiles_test, node_importance_list=node_importance_test, output_dir=results_dir)
+        
+        confidence_multiplier = 1.96  # For 95% confidence interval
+        lower_quantile = y_pred_test - confidence_multiplier * np.sqrt(y_pred_test_variance)
+        upper_quantile = y_pred_test + confidence_multiplier * np.sqrt(y_pred_test_variance)
+        lower_quantile_tr = y_pred_train - confidence_multiplier * np.sqrt(y_pred_train_variance)
+        upper_quantile_tr = y_pred_train + confidence_multiplier * np.sqrt(y_pred_train_variance)
+
+        std_dev = (upper_quantile - lower_quantile) / 2
+        std_dev_tr = (upper_quantile_tr - lower_quantile_tr) / 2
+    elif model_type == 'torch-GNN':
+        print(f"\n=== Training torch-GNN model for {target_property} ===")
+        # Initialize torch-GNN model
+        model = GNNMolecularPredictor(
+            num_tasks=1,
+            task_type="regression",
+            model_name=f"GNN_{target_property}",
+            batch_size=512,
+            epochs=100,
+            evaluate_criterion='r2',
+            evaluate_higher_better=True,
+            verbose=True
+        )
+        # Set up hyperparameter search parameters
+        search_parameters = {
+            "gnn_type": ParameterSpec(ParameterType.CATEGORICAL, ["gin-virtual", "gcn-virtual", "gin", "gcn"]),
+            "norm_layer": ParameterSpec(ParameterType.CATEGORICAL, ["batch_norm", "layer_norm", "size_norm"]),
+            'num_layer': ParameterSpec(ParameterType.INTEGER, value_range=(2, 5)),
+            'emb_dim': ParameterSpec(ParameterType.INTEGER, value_range=(256, 512)),
+            'learning_rate': ParameterSpec(ParameterType.FLOAT, value_range=(1e-4, 1e-2)),
+            'drop_ratio': ParameterSpec(ParameterType.FLOAT, value_range=(0.05, 0.5)),
+            # 'gamma': ParameterSpec(ParameterType.FLOAT, value_range=(0.25, 0.75))
+            }
+        # Train torch-GREA model
+        model.autofit(
+            X_train=smiles_train.tolist(),
+            y_train=y_train,
+            X_val=smiles_train.tolist(),
+            y_val=y_train,
+            search_parameters=search_parameters,
+            n_trials=n_trials
+        )
+        # Evaluate model on the test and training data
+        eval_results_test = model.predict(smiles_test.tolist())
+        eval_results_train = model.predict(smiles_train.tolist())
+        
+        y_pred_test = eval_results_test['prediction'].reshape(-1)
+        y_pred_train = eval_results_train['prediction'].reshape(-1)
+        y_pred_test_variance = np.zeros_like(y_pred_test) # a tempo placeholder for variance
+        y_pred_train_variance = np.zeros_like(y_pred_train)
+        
+        confidence_multiplier = 1.96  # For 95% confidence interval
+        lower_quantile = y_pred_test - confidence_multiplier * np.sqrt(y_pred_test_variance)
+        upper_quantile = y_pred_test + confidence_multiplier * np.sqrt(y_pred_test_variance)
+        lower_quantile_tr = y_pred_train - confidence_multiplier * np.sqrt(y_pred_train_variance)
+        upper_quantile_tr = y_pred_train + confidence_multiplier * np.sqrt(y_pred_train_variance)
+
+        std_dev = (upper_quantile - lower_quantile) / 2
+        std_dev_tr = (upper_quantile_tr - lower_quantile_tr) / 2
 
     else:
         raise ValueError("Unsupported model type!")
     
-
+    # Ensure all arrays are 1D
+    y_train = np.ravel(y_train)
+    y_test = np.ravel(y_test)
+    y_pred_train = np.ravel(y_pred_train)
+    y_pred_test = np.ravel(y_pred_test)
+    
     train_rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
     train_r2 = r2_score(y_train, y_pred_train)
     test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))

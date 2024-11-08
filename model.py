@@ -30,7 +30,10 @@ def build_bayesian_model(input_shape, hidden_units, output_shape):
         ])
 
     # Input layer: Ensure it's defined correctly
-    inputs = tf.keras.Input(shape=input_shape)
+    print("Input shape:", input_shape)
+    print("Expected shape for tf.keras.Input:", (input_shape[0],))
+
+    inputs = tf.keras.Input(shape=(input_shape[0],))
 
     # Dense Variational layer
     hidden = tfpl.DenseVariational(units=hidden_units,
