@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--n_jobs', type=int, default=-1, help='Number of CPU cores to use.')
 
     parser.add_argument('--model', type=str, default='QuantileRandomForest', choices=['QuantileRandomForest', 'DropoutMLP', 'BNN', 'torch-GREA', 'torch-GNN'], help='Uncertainty Model Type.')
+    parser.add_argument('--n_search', type=int, default=200, help='Number of trials for hyperparamteer search for torch-based models')
     return parser.parse_args()
 
 # def smiles_to_fingerprint(smiles_list: list[str], radius: int = 2, n_bits: int = 2048) -> np.ndarray:
@@ -165,6 +166,16 @@ def train_validate(target_property: str = 'Tg', test_size: float = 0.2, n_jobs: 
         data_path = './data/labeled/polyinfo/Tm_SMILES_class_pid_polyinfo_median.csv'
     elif target_property == 'TC':
         data_path = './data/labeled/nd/MD_TC_Oct21_2024_wSMILES.csv'
+    elif target_property == 'O2_msa':
+        data_path = './data/labeled/msa/O2_raw.csv'
+    elif target_property == 'N2_msa':
+        data_path = './data/labeled/msa/N2_raw.csv'
+    elif target_property == 'H2_msa':
+        data_path = './data/labeled/msa/H2_raw.csv'
+    elif target_property == 'CO2_msa':
+        data_path = './data/labeled/msa/CO2_raw.csv'
+    elif target_property == 'CH4_msa':
+        data_path = './data/labeled/msa/CH4_raw.csv'
     else:
         raise ValueError("Unsupported target property!")
     data = pd.read_csv(data_path)
@@ -247,34 +258,111 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
                       target_property: str = 'Tg', 
                       test_size: float = 0.2, n_jobs: int = -1,
                       model_type: str = 'QuantileRandomForest',
-                      n_trials: int = 20) -> tuple:
+                      n_trials: int = 200) -> tuple:
     
     results_dir = f'./results/{target_property}_uq/{model_type}_{fp_method}_{radius}_{n_bits}/'
     os.makedirs(results_dir, exist_ok=True)
     setup_logging(results_dir)
 
-    if target_property == 'Tg':
-        data_path = './data/labeled/polyinfo/Tg_SMILES_class_pid_polyinfo_median.csv'
-    elif target_property == 'Tm':
-        data_path = './data/labeled/polyinfo/Tm_SMILES_class_pid_polyinfo_median.csv'
-    elif target_property == 'TC':
-        data_path = './data/labeled/nd/MD_TC_Oct21_2024_wSMILES.csv'
+    if target_property in ['Tg', 'Tm', 'density', 'TC', 'Bulk_modulus_GPa', 'FFV']:
+        data_path = {
+            'Tg': './data/labeled/polyinfo/Tg_SMILES_class_pid_polyinfo_median.csv',
+            'Tm': './data/labeled/polyinfo/Tm_SMILES_class_pid_polyinfo_median.csv',
+            'density': './data/labeled/polyinfo/density_SMILES_class_pid_polyinfo_median.csv',
+            'TC': './data/labeled/nd/MD_TC_Oct21_2024_wSMILES.csv',
+            'Bulk_modulus_GPa': './data/labeled/nd/modulus_yuhan_Nov3_2024.csv',
+            'FFV': './data/labeled/uwm/YingLi_FFV_MD_homopolymer_polyamides_combined.csv'
+        }[target_property]
+    elif target_property in ('O2_msa', 'O2_msa_log10', 'N2_msa', 'N2_msa_log10', 'H2_msa', 'H2_msa_log10', 'CO2_msa', 'CO2_msa_log10', 'CH4_msa', 'CH4_msa_log10'):
+        gas = target_property.split('_')[0]
+        data_path = f'./data/labeled/msa/{gas}_raw.csv'
+    elif target_property.endswith('_ladder_fromlinear') or target_property.endswith('_ladder_fromlinear_ladder') or target_property.endswith('_ladder_fromladder'):
+        gas = target_property.split('_')[0]
+        linear_data_path = f'./data/ladder_project/final_linear_data_{gas}.csv'
+        ladder_train_path = f'./data/ladder_project/final_ladder_data_{gas}_train.csv'
+        ladder_test_path = f'./data/ladder_project/final_ladder_data_{gas}_test.csv'
     else:
         raise ValueError("Unsupported target property!")
-    data = pd.read_csv(data_path)
-    smiles = data['SMILES']
-    y = data[target_property].to_numpy()
-    if np.any(np.isnan(y)) or np.any(np.isinf(y)):
-        raise ValueError("Target variable contains NaN or infinite values.")
     
-    # # Conditionally handle fingerprinting for non-torch-GREA models
-    # if model_type != 'torch-GREA':
-    # X = smiles_to_fingerprint(smiles)
-    X = smiles_to_fingerprint(smiles, fp_method, radius, n_bits)
-    if np.any(np.isnan(X)) or np.any(np.isinf(X)):
-        raise ValueError("Feature matrix contains NaN or infinite values.")
 
-    X_train, X_test, y_train, y_test, smiles_train, smiles_test = train_test_split(X, y, smiles, test_size=test_size, random_state=42)
+    # if target_property == 'Tg':
+    #     data_path = './data/labeled/polyinfo/Tg_SMILES_class_pid_polyinfo_median.csv'
+    # elif target_property == 'Tm':
+    #     data_path = './data/labeled/polyinfo/Tm_SMILES_class_pid_polyinfo_median.csv'
+    # elif target_property == 'density':
+    #     data_path = './data/labeled/polyinfo/density_SMILES_class_pid_polyinfo_median.csv'
+    # elif target_property == 'TC':
+    #     data_path = './data/labeled/nd/MD_TC_Oct21_2024_wSMILES.csv'
+    # elif target_property == 'Bulk_modulus_GPa':
+    #     data_path = './data/labeled/nd/modulus_yuhan_Nov3_2024.csv'
+    # elif target_property in ('O2_msa', 'O2_msa_log10'):
+    #     data_path = './data/labeled/msa/O2_raw.csv'
+    # elif target_property in ('N2_msa', 'N2_msa_log10'):
+    #     data_path = './data/labeled/msa/N2_raw.csv'
+    # elif target_property in ('H2_msa', 'H2_msa_log10'):
+    #     data_path = './data/labeled/msa/H2_raw.csv'
+    # elif target_property in ('CO2_msa', 'CO2_msa_log10'):
+    #     data_path = './data/labeled/msa/CO2_raw.csv'
+    # elif target_property in ('CH4_msa', 'CH4_msa_log10'):
+    #     data_path = './data/labeled/msa/CH4_raw.csv'
+    # elif target_property == 'FFV':
+    #     data_path = './data/labeled/uwm/YingLi_FFV_MD_homopolymer_polyamides_combined.csv'
+    # else:
+    #     raise ValueError("Unsupported target property!")
+
+    if target_property.endswith('_ladder_fromlinear'):
+        train_data = pd.read_csv(linear_data_path)
+        test_data = pd.read_csv(ladder_test_path)
+    elif target_property.endswith('_ladder_fromlinear_ladder'):
+        train_data_linear = pd.read_csv(linear_data_path)
+        train_data_ladder = pd.read_csv(ladder_train_path)
+        train_data = pd.concat([train_data_linear, train_data_ladder], ignore_index=True)
+        test_data = pd.read_csv(ladder_test_path)
+    elif target_property.endswith('_ladder_fromladder'):
+        train_data = pd.read_csv(ladder_train_path)
+        test_data = pd.read_csv(ladder_test_path)
+    else:
+        data = pd.read_csv(data_path)
+        smiles = data['SMILES']
+        y = data[target_property].to_numpy()
+        if np.any(np.isnan(y)) or np.any(np.isinf(y)):
+            raise ValueError("Target variable contains NaN or infinite values.")
+        X = smiles_to_fingerprint(smiles, fp_method, radius, n_bits)
+        if np.any(np.isnan(X)) or np.any(np.isinf(X)):
+            raise ValueError("Feature matrix contains NaN or infinite values.")
+        X_train, X_test, y_train, y_test, smiles_train, smiles_test = train_test_split(
+            X, y, smiles, test_size=test_size, random_state=42
+        )
+
+    if target_property.endswith('_ladder_fromlinear') or target_property.endswith('_ladder_fromlinear_ladder') or target_property.endswith('_ladder_fromladder'):
+        # NOTE: Use the log10 of Perm
+        train_smiles = train_data['SMILES']
+        train_y = train_data[f'{gas}_log10'].to_numpy()
+        test_smiles = test_data['SMILES']
+        test_y = test_data[f'{gas}_log10'].to_numpy()
+
+        X_train = smiles_to_fingerprint(train_smiles, fp_method, radius, n_bits)
+        X_test = smiles_to_fingerprint(test_smiles, fp_method, radius, n_bits)
+        y_train = train_y
+        y_test = test_y
+
+        smiles_train = train_smiles
+        smiles_test = test_smiles
+
+    # data = pd.read_csv(data_path)
+    # smiles = data['SMILES']
+    # y = data[target_property].to_numpy()
+    # if np.any(np.isnan(y)) or np.any(np.isinf(y)):
+    #     raise ValueError("Target variable contains NaN or infinite values.")
+    
+    # # # Conditionally handle fingerprinting for non-torch-GREA models
+    # # if model_type != 'torch-GREA':
+    # # X = smiles_to_fingerprint(smiles)
+    # X = smiles_to_fingerprint(smiles, fp_method, radius, n_bits)
+    # if np.any(np.isnan(X)) or np.any(np.isinf(X)):
+    #     raise ValueError("Feature matrix contains NaN or infinite values.")
+
+    # X_train, X_test, y_train, y_test, smiles_train, smiles_test = train_test_split(X, y, smiles, test_size=test_size, random_state=42)
 
     # Save the split datasets
     np.save(os.path.join(results_dir, 'X_train.npy'), X_train)
@@ -343,7 +431,7 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
             task_type="regression",
             model_name=f"GREA_{target_property}",
             batch_size=512,
-            epochs=100,
+            epochs=500,
             evaluate_criterion='r2',
             evaluate_higher_better=True,
             verbose=True
@@ -352,11 +440,13 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
         search_parameters = {
             "gnn_type": ParameterSpec(ParameterType.CATEGORICAL, ["gin-virtual", "gcn-virtual", "gin", "gcn"]),
             "norm_layer": ParameterSpec(ParameterType.CATEGORICAL, ["batch_norm", "layer_norm", "size_norm"]),
-            'num_layer': ParameterSpec(ParameterType.INTEGER, value_range=(2, 5)),
+            'num_layer': ParameterSpec(ParameterType.INTEGER, value_range=(2, 6)),
             'emb_dim': ParameterSpec(ParameterType.INTEGER, value_range=(256, 512)),
             'learning_rate': ParameterSpec(ParameterType.FLOAT, value_range=(1e-4, 1e-2)),
             'drop_ratio': ParameterSpec(ParameterType.FLOAT, value_range=(0.05, 0.5)),
-            'gamma': ParameterSpec(ParameterType.FLOAT, value_range=(0.25, 0.75))
+            'gamma': ParameterSpec(ParameterType.FLOAT, value_range=(0.25, 0.75)),
+            "augmented_feature": ParameterSpec(
+                ParameterType.CATEGORICAL, ["maccs,morgan", "maccs", "morgan", None]) #"no_arg"
             }
         # Train torch-GREA model
         model.autofit(
@@ -367,16 +457,20 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
             search_parameters=search_parameters,
             n_trials=n_trials
         )
+        print('\n ===  y train min = ',y_train.min())
         # Evaluate model on the test and training data
         eval_results_test = model.predict(smiles_test.tolist())
         eval_results_train = model.predict(smiles_train.tolist())
         
         y_pred_test = eval_results_test['prediction'].reshape(-1)
+
+        print('\n ===  y_pred_test min = ',y_pred_test.min())
+
         y_pred_train = eval_results_train['prediction'].reshape(-1)
         y_pred_test_variance = eval_results_test['variance'].reshape(-1)
         y_pred_train_variance = eval_results_train['variance'].reshape(-1)
         node_importance_test = eval_results_test['node_importance']
-        print('top-2 example for node importance', node_importance_test[:2])
+        # print('top-2 example for node importance', node_importance_test[:2])
         
         visualize_important_nodes(smiles_list=smiles_test, node_importance_list=node_importance_test, output_dir=results_dir)
         
@@ -396,7 +490,7 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
             task_type="regression",
             model_name=f"GNN_{target_property}",
             batch_size=512,
-            epochs=100,
+            epochs=500,
             evaluate_criterion='r2',
             evaluate_higher_better=True,
             verbose=True
@@ -409,6 +503,8 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
             'emb_dim': ParameterSpec(ParameterType.INTEGER, value_range=(256, 512)),
             'learning_rate': ParameterSpec(ParameterType.FLOAT, value_range=(1e-4, 1e-2)),
             'drop_ratio': ParameterSpec(ParameterType.FLOAT, value_range=(0.05, 0.5)),
+            "augmented_feature": ParameterSpec(
+                ParameterType.CATEGORICAL, ["maccs,morgan", "maccs", "morgan", None]) #["maccs,morgan", "maccs", "morgan"]
             # 'gamma': ParameterSpec(ParameterType.FLOAT, value_range=(0.25, 0.75))
             }
         # Train torch-GREA model
@@ -447,6 +543,16 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
     y_pred_train = np.ravel(y_pred_train)
     y_pred_test = np.ravel(y_pred_test)
     
+    # save pred
+    print(f"Saving preditions to {results_dir} ...")
+    np.save(os.path.join(results_dir, 'y_pred_train.npy'), y_pred_train)
+    np.save(os.path.join(results_dir, 'y_pred_test.npy'), y_pred_test)
+
+    np.save(os.path.join(results_dir, 'y_pred_train_lb.npy'), lower_quantile_tr)
+    np.save(os.path.join(results_dir, 'y_pred_train_ub.npy'), upper_quantile_tr)
+    np.save(os.path.join(results_dir, 'y_pred_test_lb.npy'), lower_quantile)
+    np.save(os.path.join(results_dir, 'y_pred_test_ub.npy'), upper_quantile)
+    
     train_rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
     train_r2 = r2_score(y_train, y_pred_train)
     test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
@@ -481,7 +587,7 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
     # plt.errorbar(y_test, y_pred_test, yerr=[y_pred_test - lower_quantile, upper_quantile - y_pred_test], 
     #             fmt='o', color='red', alpha=0.4, label='Test')
     
-    plt.plot([y.min(), y.max()], [y.min(), y.max()], '--k', lw=2)
+    plt.plot([y_train.min(), y_train.max()], [y_train.min(), y_train.max()], '--k', lw=2)
     plt.xlabel('Actual')
     plt.ylabel('Predicted')
     plt.title(f'Parity Plot with Uncertainty for {target_property}')
@@ -505,7 +611,7 @@ def train_validate_uq(fp_method: str ='Morgan', radius: int = 2, n_bits: int = 2
     plt.errorbar(y_test, y_pred_test, yerr=[y_pred_test - lower_quantile, upper_quantile - y_pred_test], 
                 fmt='o', color='red', alpha=0.4, label='Test')
     
-    plt.plot([y.min(), y.max()], [y.min(), y.max()], '--k', lw=2)
+    plt.plot([y_train.min(), y_train.max()], [y_train.min(), y_train.max()], '--k', lw=2)
     plt.xlabel('Actual')
     plt.ylabel('Predicted')
     plt.title(f'Parity Plot with Uncertainty for {target_property}')
@@ -579,4 +685,5 @@ if __name__ == "__main__":
     train_validate_uq(fp_method=args.fpmethod, radius = args.radius, n_bits=args.n_bits,
                       target_property = args.target_property, 
                       test_size = args.test_size, n_jobs = args.n_jobs,
-                      model_type = args.model)
+                      model_type = args.model,
+                      n_trials = args.n_search)
