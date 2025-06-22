@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "/Users/jao/Documents/Research/Project_1/PI1M_imputation/new_repo/POINT2/train.py", line 452, in <module>
+    train_validate_uq(fp_method=args.fpmethod, radius = args.radius, n_bits=args.n_bits,
+  File "/Users/jao/Documents/Research/Project_1/PI1M_imputation/new_repo/POINT2/train.py", line 304, in train_validate_uq
+    model = build_bayesian_model(input_shape=input_shape, hidden_units=hidden_units, output_shape=1)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jao/Documents/Research/Project_1/PI1M_imputation/new_repo/POINT2/model.py", line 36, in build_bayesian_model
+    hidden = tfpl.DenseVariational(units=hidden_units,
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jao/miniforge3/envs/point2_env/lib/python3.11/site-packages/tf_keras/src/utils/traceback_utils.py", line 70, in error_handler
+    raise e.with_traceback(filtered_tb) from None
+  File "/Users/jao/miniforge3/envs/point2_env/lib/python3.11/site-packages/tf_keras/src/engine/input_spec.py", line 251, in assert_input_compatibility
+    ndim = x.shape.rank
+           ^^^^^^^^^^^^
+AttributeError: 'tuple' object has no attribute 'rank'

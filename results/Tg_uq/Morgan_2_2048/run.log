@@ -1,0 +1,6 @@
+Train RMSE: 10.2363
+Train R2: 0.9917
+Test RMSE: 38.0686
+Test R2: 0.8833
+Spearman's rank correlation coefficient (error vs. std dev) - Test: 0.3166
+Spearman's rank correlation coefficient (error vs. std dev) - Train: -0.2368

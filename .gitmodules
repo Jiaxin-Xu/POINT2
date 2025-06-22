@@ -1,0 +1,3 @@
+[submodule "torch-molecule"]
+	path = torch-molecule
+	url = https://github.com/liugangcode/torch-molecule.git
