@@ -1,5 +1,8 @@
 # POINT2
 ## POINT2 Database -- POlymer INformatics Training and Testing Database based on PI1M
+
+## NOTE: more info regarding data&model availability will be available upon formal publication
+
 ### 1. Data
 Data source of PI1M is from:
 ```
